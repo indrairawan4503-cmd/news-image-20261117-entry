@@ -26,6 +26,7 @@ compositing path produces). Either way the output is the same file.
 
 import os
 import shutil
+import struct
 import sys
 from pathlib import Path
 
@@ -168,6 +169,29 @@ def compose():
     return canvas
 
 
+def _verify_png(path):
+    """Post-write self-check: valid PNG signature, <= 1 MiB, 1024x1024.
+
+    Stdlib only (struct), so it also guards the fallback copy path.
+    Raises ValueError with a clear message if any check fails.
+    """
+    data = path.read_bytes()
+    if len(data) > 1048576:
+        raise ValueError(
+            f"{path.name} is {len(data)} bytes, over the 1 MiB limit"
+        )
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError(f"{path.name} is not a valid PNG (bad signature)")
+    if len(data) < 24 or data[12:16] != b"IHDR":
+        raise ValueError(f"{path.name} is not a valid PNG (missing IHDR chunk)")
+    width, height = struct.unpack(">II", data[16:24])
+    if (width, height) != SIZE:
+        raise ValueError(
+            f"{path.name} is {width}x{height}, "
+            f"expected {SIZE[0]}x{SIZE[1]}"
+        )
+
+
 def main():
     out_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "out"))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -178,6 +202,11 @@ def main():
     except Exception:
         # No PIL / no fonts in this sandbox: ship the pre-rendered image.
         shutil.copyfile(FINAL_IMAGE, out_path)
+    try:
+        _verify_png(out_path)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
